@@ -3,365 +3,422 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Tombola Python 🎯</title>
+    <title>🎯 Tombola Python - Smorfia Napoletana</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="/style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
     <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎲</text></svg>">
-    <style>
-        /* Stili aggiuntivi per WebSocket */
-        .connection-status {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            background: #1e293b;
-            padding: 8px 15px;
-            border-radius: 20px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-size: 0.8rem;
-            z-index: 1000;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-        }
-        
-        .connection-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-        
-        .connection-dot.connected {
-            background: #10b981;
-            animation: blink 2s infinite;
-        }
-        
-        .connection-dot.disconnected {
-            background: #ef4444;
-        }
-        
-        @keyframes blink {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        
-        /* Toast notification */
-        .toast {
-            position: fixed;
-            top: 20px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: linear-gradient(135deg, #306998, #4B8BBE);
-            color: white;
-            padding: 15px 25px;
-            border-radius: 10px;
-            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
-            display: flex;
-            align-items: center;
-            gap: 12px;
-            z-index: 3000;
-            max-width: 90%;
-            animation: toastIn 0.3s ease;
-        }
-        
-        @keyframes toastIn {
-            from { opacity: 0; transform: translate(-50%, -20px); }
-            to { opacity: 1; transform: translate(-50%, 0); }
-        }
-        
-        .toast.success {
-            background: linear-gradient(135deg, #10b981, #34d399);
-        }
-        
-        .toast.error {
-            background: linear-gradient(135deg, #ef4444, #f87171);
-        }
-        
-        .toast.warning {
-            background: linear-gradient(135deg, #f59e0b, #fbbf24);
-        }
-    </style>
 </head>
 <body>
-    <!-- Connection Status -->
-    <div class="connection-status">
-        <div class="connection-dot disconnected" id="connection-dot"></div>
-        <span id="connection-text">Disconnesso</span>
-    </div>
-
-    <!-- Login Screen -->
-    <div id="login-screen" class="login-screen">
-        <div class="container">
-            <div class="login-card">
-                <div class="logo">
-                    <h1><span style="color: #FFD43B;">Tombola</span> Pythoniana</h1>
-                    <p class="subtitle">🎯 Multiplayer in tempo reale</p>
-                    <p style="color: #94a3b8; font-size: 0.9rem; margin-top: 5px;">
-                        <i class="fas fa-bolt"></i> WebSocket attivo
-                    </p>
-                </div>
-                
-                <!-- Crea Stanza -->
-                <div id="create-room-section">
-                    <h3 style="margin-bottom: 20px; color: #FFD43B;">
-                        <i class="fas fa-plus-circle"></i> Crea Nuova Stanza
-                    </h3>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Il tuo nome (Amministratore)</label>
-                        <input type="text" class="form-input" id="admin-name" 
-                               placeholder="Es: Mario" value="Amministratore">
-                    </div>
-                    
-                    <button class="btn btn-primary" id="create-room-btn">
-                        <i class="fas fa-plus"></i> Crea Stanza
-                    </button>
-                    
-                    <div style="text-align: center; margin: 25px 0;">
-                        <span style="color: #94a3b8;">oppure</span>
-                    </div>
-                    
-                    <!-- Unisciti a Stanza -->
-                    <h3 style="margin-bottom: 20px; color: #4B8BBE;">
-                        <i class="fas fa-sign-in-alt"></i> Unisciti a Stanza
-                    </h3>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Codice Stanza</label>
-                        <input type="text" class="form-input" id="room-code-input" 
-                               placeholder="Es: ABC123" style="text-transform: uppercase;">
-                    </div>
-                    
-                    <div class="form-group">
-                        <label class="form-label">Il tuo nome</label>
-                        <input type="text" class="form-input" id="player-name-input" 
-                               placeholder="Es: Luigi" value="Giocatore">
-                    </div>
-                    
-                    <button class="btn btn-secondary" id="join-room-btn">
-                        <i class="fas fa-door-open"></i> Unisciti
-                    </button>
-                </div>
-                
-                <!-- Server Info -->
-                <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid rgba(255, 255, 255, 0.1);">
-                    <p style="color: #94a3b8; font-size: 0.85rem; text-align: center;">
-                        <i class="fas fa-server"></i> Server: <span id="server-status">Connessione...</span>
-                    </p>
-                </div>
+    <!-- Admin Login Modal -->
+    <div id="admin-login-modal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">
+                    <i class="fas fa-lock"></i> Accesso Amministratore
+                </h2>
+                <p class="modal-subtitle">Solo gli admin possono creare stanze</p>
             </div>
-        </div>
-    </div>
-
-    <!-- Room Lobby (Admin) -->
-    <div id="room-lobby" class="login-screen hidden">
-        <div class="container">
-            <div class="login-card">
-                <div class="logo">
-                    <h1><span style="color: #FFD43B;">Python</span> Tombola</h1>
-                    <p class="subtitle">👑 Sei l'Amministratore</p>
+            
+            <div class="modal-content">
+                <div class="form-group">
+                    <label class="form-label">
+                        <i class="fas fa-envelope"></i> Email Admin
+                    </label>
+                    <input type="email" class="form-input" id="admin-email" 
+                           placeholder="admin@tombola.it" value="admin@tombola.it">
                 </div>
                 
-                <div class="room-code-display">
-                    <div style="color: #94a3b8; font-size: 0.9rem;">
-                        <i class="fas fa-door-closed"></i> Codice Stanza
+                <div class="form-group">
+                    <label class="form-label">
+                        <i class="fas fa-key"></i> Password
+                    </label>
+                    <input type="password" class="form-input" id="admin-password" 
+                           placeholder="Inserisci password" value="Admin123!">
+                    <div class="form-hint">
+                        <i class="fas fa-info-circle"></i> Credenziali di default mostrate per test
                     </div>
-                    <div class="room-code" id="room-code-display">ABC123</div>
-                    <div style="color: #94a3b8; font-size: 0.9rem;">
-                        Condividi questo codice con i giocatori
-                    </div>
-                </div>
-                
-                <button class="btn btn-warning" id="copy-room-btn" style="margin-bottom: 20px;">
-                    <i class="fas fa-copy"></i> Copia Codice
-                </button>
-                
-                <!-- Lista Giocatori -->
-                <h3 style="margin: 25px 0 15px 0; color: #f1f5f9;">
-                    <i class="fas fa-users"></i> Giocatori in Lobby (<span id="players-count">0</span>)
-                </h3>
-                <div id="lobby-players" class="players-list-mobile">
-                    <div class="empty-state">
-                        <i class="fas fa-user-clock"></i>
-                        <p>In attesa di giocatori...</p>
-                    </div>
-                </div>
-                
-                <!-- Avvia Gioco -->
-                <button class="btn btn-success" id="start-game-btn" style="margin-top: 30px;">
-                    <i class="fas fa-play"></i> Avvia Partita
-                </button>
-                
-                <button class="btn btn-secondary" onclick="location.reload()" style="margin-top: 15px;">
-                    <i class="fas fa-sign-out-alt"></i> Esci
-                </button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Game Screen -->
-    <div id="game-screen" class="game-screen hidden">
-        <!-- Mobile Header -->
-        <div class="mobile-header">
-            <div class="mobile-header-top">
-                <div class="user-badge">
-                    <div class="user-avatar" id="user-avatar">
-                        <i class="fas fa-user"></i>
-                    </div>
-                    <div>
-                        <h3 id="user-name">-</h3>
-                        <span class="user-role" id="user-role">-</span>
-                    </div>
-                </div>
-                <div style="text-align: right;">
-                    <div style="color: #94a3b8; font-size: 0.8rem;">Stanza</div>
-                    <div style="font-weight: 600; font-size: 1.1rem;" id="current-room-code">ABC123</div>
                 </div>
             </div>
             
-            <div class="mobile-stats">
-                <div class="stat-item">
-                    <div class="stat-value" id="numbers-left">90</div>
-                    <div class="stat-label">Rimasti</div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="player-mode-btn">
+                    <i class="fas fa-user"></i> Voglio solo giocare
+                </button>
+                <button class="btn btn-primary" id="admin-login-btn">
+                    <i class="fas fa-sign-in-alt"></i> Accedi come Admin
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Admin Dashboard Modal -->
+    <div id="admin-dashboard-modal" class="modal-overlay hidden">
+        <div class="modal admin-dashboard">
+            <div class="modal-header">
+                <h2 class="modal-title">
+                    <i class="fas fa-user-cog"></i> Dashboard Admin
+                </h2>
+                <div class="admin-info">
+                    <span id="admin-name-display">-</span>
+                    <span class="admin-badge" id="admin-type">Admin</span>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="extracted-count">0</div>
-                    <div class="stat-label">Estratti</div>
+            </div>
+            
+            <div class="dashboard-tabs">
+                <div class="tab-nav">
+                    <button class="tab-btn active" data-tab="create-room">
+                        <i class="fas fa-plus-circle"></i> Crea Stanza
+                    </button>
+                    <button class="tab-btn" data-tab="manage-admins" id="manage-admins-btn">
+                        <i class="fas fa-users-cog"></i> Gestisci Admin
+                    </button>
                 </div>
-                <div class="stat-item">
-                    <div class="stat-value" id="online-players">0</div>
-                    <div class="stat-label">Online</div>
+                
+                <div class="tab-content active" id="create-room-tab">
+                    <div class="form-group">
+                        <label class="form-label">
+                            <i class="fas fa-user-tie"></i> Nome Stanza
+                        </label>
+                        <input type="text" class="form-input" id="room-name" 
+                               placeholder="Es: Tombola di Natale" value="Tombola Python">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">
+                            <i class="fas fa-users"></i> Massimo Giocatori
+                        </label>
+                        <input type="number" class="form-input" id="max-players" 
+                               min="2" max="50" value="20">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">
+                            <i class="fas fa-magic"></i> Impostazioni
+                        </label>
+                        <div class="checkbox-group">
+                            <label class="checkbox">
+                                <input type="checkbox" id="show-smorfia" checked>
+                                <span class="checkmark"></span>
+                                Mostra significati Smorfia
+                            </label>
+                            <label class="checkbox">
+                                <input type="checkbox" id="auto-mark" checked>
+                                <span class="checkmark"></span>
+                                Segna automaticamente numeri
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <button class="btn btn-success" id="create-room-admin-btn" style="width: 100%;">
+                        <i class="fas fa-door-open"></i> Crea Nuova Stanza
+                    </button>
+                </div>
+                
+                <div class="tab-content hidden" id="manage-admins-tab">
+                    <div class="form-group">
+                        <label class="form-label">
+                            <i class="fas fa-envelope"></i> Email nuovo admin
+                        </label>
+                        <input type="email" class="form-input" id="new-admin-email" 
+                               placeholder="nuovo@admin.it">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">
+                            <i class="fas fa-user"></i> Nome Admin
+                        </label>
+                        <input type="text" class="form-input" id="new-admin-name" 
+                               placeholder="Nome visualizzato">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label class="form-label">
+                            <i class="fas fa-key"></i> Password
+                        </label>
+                        <input type="password" class="form-input" id="new-admin-password" 
+                               placeholder="Password sicura">
+                    </div>
+                    
+                    <button class="btn btn-warning" id="create-admin-btn" style="width: 100%;">
+                        <i class="fas fa-user-plus"></i> Crea Nuovo Admin
+                    </button>
+                    
+                    <div class="admins-list" id="admins-list">
+                        <!-- Lista admin apparirà qui -->
+                    </div>
+                </div>
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="logout-admin-btn">
+                    <i class="fas fa-sign-out-alt"></i> Logout
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Game Screen -->
+    <div id="game-screen" class="game-screen hidden">
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <div class="room-info">
+                <div class="room-code-badge" id="room-code-badge">
+                    <i class="fas fa-door-closed"></i>
+                    <span id="current-room-code">ABC123</span>
+                </div>
+                <div class="game-status" id="game-status">
+                    <i class="fas fa-circle"></i>
+                    <span>In attesa...</span>
+                </div>
+            </div>
+            
+            <div class="user-info">
+                <div class="user-avatar" id="user-avatar">
+                    <i class="fas fa-user"></i>
+                </div>
+                <div class="user-details">
+                    <div class="user-name" id="user-name">Giocatore</div>
+                    <div class="user-score" id="user-score">0/15</div>
                 </div>
             </div>
         </div>
 
-        <!-- Game Content -->
-        <div class="game-content">
-            <div class="current-number-section">
-                <div id="no-number">
-                    <i class="fas fa-hourglass-half" style="font-size: 3rem; color: #94a3b8; margin-bottom: 15px;"></i>
-                    <div style="color: #94a3b8; font-size: 1.1rem;">
-                        In attesa del primo numero...
+        <!-- Main Content - Card View -->
+        <div class="main-content">
+            <!-- My Tombola Card -->
+            <div class="card-container">
+                <div class="card-header">
+                    <h2 class="card-title">
+                        <i class="fas fa-table"></i> La mia Cartella
+                    </h2>
+                    <div class="card-progress">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                        </div>
+                        <div class="progress-text" id="progress-text">0%</div>
                     </div>
                 </div>
-                <div id="current-number" class="hidden">
-                    <div style="color: #94a3b8;">Ultimo numero estratto</div>
-                    <div class="current-number-large" id="current-number-value">-</div>
-                    <div style="color: #94a3b8;">Tocca per segnare sulla tua cartella</div>
+                
+                <div class="tombola-card-grid" id="tombola-card-grid">
+                    <!-- La cartella apparirà qui -->
                 </div>
-            </div>
-
-            <!-- Admin Controls -->
-            <div id="admin-controls" class="hidden">
-                <div class="controls-mobile">
-                    <button class="control-btn" id="extract-btn">
-                        <i class="fas fa-dice"></i>
-                        <span>ESTRAI</span>
-                    </button>
-                    <button class="control-btn warning" id="auto-btn">
-                        <i class="fas fa-robot"></i>
-                        <span>AUTO</span>
-                    </button>
-                    <button class="control-btn success" id="new-game-btn">
-                        <i class="fas fa-redo"></i>
-                        <span>NUOVA</span>
-                    </button>
-                    <button class="control-btn" id="copy-room-game-btn">
-                        <i class="fas fa-copy"></i>
-                        <span>CODICE</span>
-                    </button>
-                </div>
-            </div>
-
-            <!-- Player Message -->
-            <div id="player-message" class="hidden" style="text-align: center; padding: 20px; color: #94a3b8;">
-                <i class="fas fa-info-circle"></i> In attesa che l'amministratore estragga i numeri...
-            </div>
-
-            <!-- Recent Numbers -->
-            <div class="recent-numbers-section">
-                <h3 class="section-title">
-                    <i class="fas fa-history"></i> Ultimi Numeri
-                </h3>
-                <div class="recent-numbers" id="recent-numbers">
-                    <!-- Numbers will appear here -->
-                </div>
-            </div>
-
-            <!-- Tombola Card -->
-            <div class="tombola-section">
-                <div class="tombola-card active">
-                    <div class="tombola-card-header">
-                        <div class="tombola-card-title">La tua Cartella</div>
-                        <div class="tombola-card-score" id="player-score">0/15</div>
+                
+                <div class="card-footer">
+                    <div class="numbers-found">
+                        <i class="fas fa-check-circle"></i>
+                        <span id="numbers-found">0</span> numeri trovati
                     </div>
-                    <div class="tombola-numbers-grid" id="tombola-card-grid">
-                        <!-- Cartella tombola apparirà qui -->
+                    <button class="btn btn-small" id="auto-mark-btn">
+                        <i class="fas fa-magic"></i> Auto-segna
+                    </button>
+                </div>
+            </div>
+
+            <!-- Game Controls & Info -->
+            <div class="sidebar">
+                <!-- Current Number Display -->
+                <div class="current-number-card" id="current-number-card">
+                    <div class="number-display">
+                        <div class="number-label">Ultimo numero</div>
+                        <div class="number-value" id="current-number-value">-</div>
+                        <div class="number-meaning" id="number-meaning">
+                            <i class="fas fa-quote-left"></i>
+                            <span>In attesa dell'estrazione...</span>
+                        </div>
+                    </div>
+                    
+                    <div class="extract-controls" id="admin-controls-sidebar">
+                        <button class="btn btn-extract" id="extract-btn-sidebar">
+                            <i class="fas fa-dice"></i> Estrai Numero
+                        </button>
+                        <button class="btn btn-auto" id="auto-btn-sidebar">
+                            <i class="fas fa-robot"></i> Auto
+                        </button>
+                    </div>
+                    
+                    <div class="player-message" id="player-message-sidebar">
+                        <i class="fas fa-info-circle"></i>
+                        <span>In attesa che l'admin estragga i numeri...</span>
                     </div>
                 </div>
-            </div>
 
-            <!-- Players List -->
-            <div class="players-section">
-                <h3 class="section-title">
-                    <i class="fas fa-users"></i> Giocatori Online
-                </h3>
-                <div class="players-list-mobile" id="players-list">
-                    <!-- Giocatori appariranno qui -->
+                <!-- Recent Numbers -->
+                <div class="recent-numbers-card">
+                    <h3 class="section-title">
+                        <i class="fas fa-history"></i> Ultimi Numeri
+                    </h3>
+                    <div class="recent-numbers-grid" id="recent-numbers-grid">
+                        <!-- Numeri recenti appariranno qui -->
+                    </div>
+                </div>
+
+                <!-- Players List -->
+                <div class="players-card">
+                    <h3 class="section-title">
+                        <i class="fas fa-users"></i> Giocatori
+                        <span class="badge" id="players-count">0</span>
+                    </h3>
+                    <div class="players-list" id="players-list-sidebar">
+                        <!-- Lista giocatori -->
+                    </div>
                 </div>
             </div>
         </div>
 
-        <!-- Bottom Navigation -->
-        <div class="bottom-nav">
-            <div style="text-align: center; color: #94a3b8; font-size: 0.9rem; margin-bottom: 10px;">
-                <i class="fas fa-sync-alt fa-spin" id="sync-icon"></i>
-                <span id="game-status">Connesso</span>
-            </div>
-            <button class="btn btn-danger" onclick="location.reload()" style="width: 100%;">
-                <i class="fas fa-sign-out-alt"></i> Esci dalla Stanza
+        <!-- Bottom Action Bar -->
+        <div class="bottom-bar">
+            <button class="action-btn" id="join-room-btn-bottom">
+                <i class="fas fa-door-open"></i>
+                <span>Unisciti</span>
             </button>
+            
+            <button class="action-btn" id="new-game-btn-bottom">
+                <i class="fas fa-redo"></i>
+                <span>Nuova</span>
+            </button>
+            
+            <button class="action-btn" id="copy-code-btn-bottom">
+                <i class="fas fa-copy"></i>
+                <span>Codice</span>
+            </button>
+            
+            <button class="action-btn" id="settings-btn-bottom">
+                <i class="fas fa-cog"></i>
+                <span>Impostazioni</span>
+            </button>
+        </div>
+
+        <!-- Connection Status -->
+        <div class="connection-status">
+            <div class="connection-dot" id="connection-dot"></div>
+            <span id="connection-text">Connessione...</span>
+        </div>
+    </div>
+
+    <!-- Join Room Modal -->
+    <div id="join-room-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 class="modal-title">
+                    <i class="fas fa-sign-in-alt"></i> Unisciti a Stanza
+                </h2>
+            </div>
+            
+            <div class="modal-content">
+                <div class="form-group">
+                    <label class="form-label">
+                        <i class="fas fa-key"></i> Codice Stanza
+                    </label>
+                    <input type="text" class="form-input" id="join-room-code-input" 
+                           placeholder="ABC123" style="text-transform: uppercase;">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">
+                        <i class="fas fa-user"></i> Il tuo Nome
+                    </label>
+                    <input type="text" class="form-input" id="join-player-name" 
+                           placeholder="Come vuoi essere chiamato" value="Giocatore">
+                </div>
+            </div>
+            
+            <div class="modal-actions">
+                <button class="btn btn-secondary" id="cancel-join-btn">
+                    Annulla
+                </button>
+                <button class="btn btn-primary" id="confirm-join-btn">
+                    <i class="fas fa-gamepad"></i> Entra in Partita
+                </button>
+            </div>
         </div>
     </div>
 
     <!-- Number Popup -->
-    <div class="number-popup" id="number-popup">
-        <div class="popup-content">
-            <div style="color: #94a3b8; font-size: 1.2rem;">Estratto il numero:</div>
-            <div class="popup-number" id="popup-number">-</div>
-            <div class="popup-message">Controlla la tua cartella!</div>
-            <button class="popup-btn" id="close-popup">
-                <i class="fas fa-check"></i> OK
-            </button>
+    <div id="number-popup" class="number-popup-overlay hidden">
+        <div class="number-popup">
+            <div class="popup-header">
+                <div class="popup-title">Numero Estratto!</div>
+                <div class="popup-subtitle">Controlla la tua cartella</div>
+            </div>
+            
+            <div class="popup-number-display">
+                <div class="popup-number-value" id="popup-number-value">-</div>
+                <div class="popup-number-meaning" id="popup-number-meaning">
+                    <!-- Significato Smorfia -->
+                </div>
+            </div>
+            
+            <div class="popup-actions">
+                <button class="btn btn-popup" id="close-popup-btn">
+                    <i class="fas fa-check"></i> Ho capito!
+                </button>
+            </div>
         </div>
     </div>
 
-    <!-- Winner Modal -->
-    <div class="modal-overlay" id="winner-modal-overlay">
-        <div class="modal">
-            <h2 class="modal-title">🎉 TOMBOLA! 🎉</h2>
-            <div class="modal-content">
-                <p style="text-align: center; font-size: 1.3rem; margin: 20px 0;">
-                    <strong id="winner-name">-</strong> ha completato la cartella!
-                </p>
-                <div style="text-align: center; font-size: 5rem; margin: 20px 0;">🏆</div>
-                <p style="text-align: center; color: #94a3b8;">
-                    La partita è terminata!
-                </p>
+    <!-- Winner Popup -->
+    <div id="winner-popup" class="modal-overlay hidden">
+        <div class="modal winner-modal">
+            <div class="winner-header">
+                <div class="winner-icon">🏆</div>
+                <h2 class="winner-title">TOMBOLA!</h2>
             </div>
+            
+            <div class="winner-content">
+                <div class="winner-name" id="winner-name">-</div>
+                <div class="winner-message">ha completato la cartella per primo!</div>
+                <div class="winner-celebration">
+                    <i class="fas fa-confetti"></i> Complimenti! <i class="fas fa-confetti"></i>
+                </div>
+            </div>
+            
             <div class="modal-actions">
-                <button class="btn btn-secondary" id="close-winner-modal">
-                    Chiudi
+                <button class="btn btn-secondary" id="continue-btn">
+                    Continua a giocare
                 </button>
-                <button class="btn btn-primary" id="new-game-modal-btn">
+                <button class="btn btn-primary" id="new-game-popup-btn">
                     Nuova Partita
                 </button>
             </div>
         </div>
     </div>
 
+    <!-- Toast Notifications -->
+    <div id="toast-container"></div>
+
     <!-- Scripts -->
     <script src="/socket.io/socket.io.js"></script>
     <script src="/game.js"></script>
+    
+    <script>
+        // Animazioni CSS aggiuntive
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes slideUp {
+                from { transform: translateY(100%); opacity: 0; }
+                to { transform: translateY(0); opacity: 1; }
+            }
+            
+            @keyframes slideDown {
+                from { transform: translateY(-100%); opacity: 0; }
+                to { transform: translateY(0); opacity: 1; }
+            }
+            
+            @keyframes pulse {
+                0% { transform: scale(1); }
+                50% { transform: scale(1.05); }
+                100% { transform: scale(1); }
+            }
+            
+            @keyframes float {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-10px); }
+            }
+        `;
+        document.head.appendChild(style);
+    </script>
 </body>
 </html>
