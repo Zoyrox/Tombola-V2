@@ -1,6 +1,29 @@
 services:
   - type: web
-    name: tombola-python
-    env: static
-    buildCommand: ""
-    staticPublishPath: "."
+    name: tombola-natalizia
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        generator: port
+      - key: SUPER_ADMIN_EMAIL
+        value: superadmin@tombola.natale
+      - key: SUPER_ADMIN_PASSWORD
+        value: Natale2023! # CAMBIA IN PRODUZIONE!
+      - key: ALLOWED_ORIGINS
+        value: https://tombola-natalizia.onrender.com
+    healthCheckPath: /api/health
+    autoDeploy: true
+    headers:
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
