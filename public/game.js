@@ -1,71 +1,196 @@
-// Tombola Game Client con WebSocket
+// game.js - Tombola Python Game Client
 class TombolaGame {
   constructor() {
     this.socket = null;
     this.user = null;
     this.room = null;
+    this.isAdmin = false;
+    this.isSuperAdmin = false;
+    this.autoExtractInterval = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 5;
+    this.autoMarkEnabled = true;
+    this.cardNumbers = [];
+    this.markedNumbers = new Set();
+    
+    // Inizializza subito
     this.init();
   }
 
   init() {
     this.setupEventListeners();
-    this.connectToServer();
+    this.initSocket();
+    this.showAdminLoginModal();
+    this.updateConnectionStatus();
   }
 
-  connectToServer() {
-    // Connetti al server Socket.io (usa URL corrente)
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const host = window.location.host;
-    this.socket = io(`${protocol}//${host}`);
-
-    // Setup event handlers
-    this.setupSocketEvents();
+  setupEventListeners() {
+    // Admin Login
+    document.getElementById('admin-login-btn').addEventListener('click', () => this.adminLogin());
+    document.getElementById('player-mode-btn').addEventListener('click', () => this.showJoinRoomModal());
+    document.getElementById('logout-admin-btn').addEventListener('click', () => this.logoutAdmin());
     
-    // Check server health
-    this.checkServerHealth();
+    // Admin Dashboard
+    document.getElementById('create-room-admin-btn').addEventListener('click', () => this.createRoomAsAdmin());
+    document.getElementById('create-admin-btn').addEventListener('click', () => this.createNewAdmin());
+    document.getElementById('manage-admins-btn').addEventListener('click', () => this.loadAdminsList());
+    
+    // Tab navigation
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const tabName = e.currentTarget.dataset.tab;
+        this.switchAdminTab(tabName);
+      });
+    });
+    
+    // Join Room
+    document.getElementById('join-room-btn-bottom').addEventListener('click', () => this.showJoinRoomModal());
+    document.getElementById('confirm-join-btn').addEventListener('click', () => this.joinRoomAsPlayer());
+    document.getElementById('cancel-join-btn').addEventListener('click', () => this.hideJoinRoomModal());
+    
+    // Game Controls
+    document.getElementById('extract-btn-sidebar').addEventListener('click', () => this.extractNumber());
+    document.getElementById('auto-btn-sidebar').addEventListener('click', () => this.toggleAutoExtract());
+    document.getElementById('new-game-btn-bottom').addEventListener('click', () => this.startNewGame());
+    document.getElementById('copy-code-btn-bottom').addEventListener('click', () => this.copyRoomCode());
+    document.getElementById('auto-mark-btn').addEventListener('click', () => this.toggleAutoMark());
+    document.getElementById('new-game-popup-btn').addEventListener('click', () => this.startNewGame());
+    document.getElementById('settings-btn-bottom').addEventListener('click', () => this.showSettingsModal());
+    
+    // Popups
+    document.getElementById('close-popup-btn').addEventListener('click', () => this.closeNumberPopup());
+    document.getElementById('continue-btn').addEventListener('click', () => this.closeWinnerPopup());
+    
+    // Enter key per login
+    document.getElementById('admin-password').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') this.adminLogin();
+    });
+    
+    document.getElementById('join-room-code-input').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') this.joinRoomAsPlayer();
+    });
   }
 
-  setupSocketEvents() {
+  initSocket() {
+    // Connessione a Socket.io
+    this.socket = io({
+      reconnection: true,
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000
+    });
+
+    // Socket event handlers
     this.socket.on('connect', () => {
-      console.log('Connesso al server WebSocket');
-      this.updateConnectionStatus(true);
+      console.log('Connesso al server');
       this.reconnectAttempts = 0;
-      this.showToast('Connesso al server!', 'success');
+      this.updateConnectionStatus(true);
+      
+      // Se abbiamo credenziali salvate, prova login automatico
+      const savedSession = localStorage.getItem('admin_session');
+      if (savedSession) {
+        try {
+          const session = JSON.parse(savedSession);
+          this.socket.emit('admin-login', {
+            email: session.email,
+            password: session.password
+          });
+        } catch (e) {
+          localStorage.removeItem('admin_session');
+        }
+      }
     });
 
-    this.socket.on('disconnect', () => {
-      console.log('Disconnesso dal server');
+    this.socket.on('connect_error', (error) => {
+      console.error('Errore connessione:', error);
       this.updateConnectionStatus(false);
-      this.showToast('Disconnesso, riconnessione in corso...', 'warning');
-      this.attemptReconnect();
+      this.showToast('Errore di connessione al server', 'error');
+      
+      this.reconnectAttempts++;
+      if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+        this.showToast('Impossibile connettersi. Ricarica la pagina.', 'error');
+      }
     });
 
-    this.socket.on('error', (error) => {
-      console.error('Errore WebSocket:', error);
-      this.showToast(error.message || 'Errore di connessione', 'error');
+    this.socket.on('disconnect', (reason) => {
+      console.log('Disconnesso:', reason);
+      this.updateConnectionStatus(false);
+      if (reason === 'io server disconnect') {
+        this.showToast('Disconnesso dal server', 'warning');
+      }
     });
 
+    // Admin Events
+    this.socket.on('admin-login-success', (data) => {
+      this.isAdmin = true;
+      this.isSuperAdmin = data.isSuperAdmin;
+      this.user = {
+        email: data.email,
+        name: data.name,
+        role: 'admin',
+        isSuperAdmin: data.isSuperAdmin
+      };
+      
+      // Salva sessione per future connessioni
+      localStorage.setItem('admin_session', JSON.stringify({
+        email: data.email,
+        password: document.getElementById('admin-password').value
+      }));
+      
+      this.showAdminDashboard(data);
+      this.showToast(`Benvenuto Admin ${data.name}!`, 'success');
+    });
+
+    this.socket.on('admin-login-error', (data) => {
+      this.showToast(data.message || 'Credenziali non valide', 'error');
+    });
+
+    this.socket.on('admin-created', (data) => {
+      this.showToast(`Admin ${data.name} creato con successo!`, 'success');
+      this.loadAdminsList();
+      document.getElementById('new-admin-email').value = '';
+      document.getElementById('new-admin-name').value = '';
+      document.getElementById('new-admin-password').value = '';
+    });
+
+    this.socket.on('create-admin-error', (data) => {
+      this.showToast(data.message || 'Errore creazione admin', 'error');
+    });
+
+    // Room Events
     this.socket.on('room-created', (data) => {
-      this.user = data.user;
       this.room = data.room;
-      this.showRoomLobby();
-      this.showToast(`Stanza ${data.roomCode} creata!`, 'success');
+      this.user = data.user;
+      this.cardNumbers = data.user.cardNumbers || [];
+      
+      this.showGameScreen();
+      this.updateRoomInfo();
+      this.generateTombolaCard();
+      this.showToast(`Stanza ${data.room.code} creata!`, 'success');
     });
 
     this.socket.on('room-joined', (data) => {
-      this.user = data.user;
       this.room = data.room;
+      this.user = data.user;
+      this.cardNumbers = data.user.cardNumbers || [];
+      
       this.showGameScreen();
-      this.showToast(`Benvenuto ${data.user.name}!`, 'success');
+      this.updateRoomInfo();
+      this.generateTombolaCard();
+      this.showToast(`Unito alla stanza ${data.room.code}!`, 'success');
+    });
+
+    this.socket.on('error', (data) => {
+      this.showToast(data.message || 'Errore', 'error');
     });
 
     this.socket.on('player-joined', (data) => {
-      if (this.user?.role === 'admin') {
-        this.updateLobbyPlayers(data.players);
+      if (this.room) {
+        this.room.players = data.players;
+        this.updatePlayersList();
+        this.showToast(`${data.player.name} si è unito alla stanza!`, 'info');
       }
-      this.showToast(`${data.player.name} si è unito!`, 'info');
     });
 
     this.socket.on('player-left', (data) => {
@@ -75,455 +200,646 @@ class TombolaGame {
       }
     });
 
+    this.socket.on('room-closed', (data) => {
+      this.showToast(data.message || 'Stanza chiusa', 'warning');
+      this.showAdminLoginModal();
+    });
+
+    // Game Events
     this.socket.on('game-started', (data) => {
       this.room = data.room;
-      this.showGameScreen();
+      this.resetGameState();
       this.showToast('Partita iniziata!', 'success');
     });
 
     this.socket.on('number-extracted', (data) => {
-      this.room = data.room;
-      this.showNumberPopup(data.number);
-      this.updateGameUI();
-      this.updateTombolaCard();
+      if (this.room) {
+        this.room.game = data.room.game;
+        this.updateCurrentNumber(data.number, data.meaning);
+        this.updateRecentNumbers();
+        this.updatePlayersList();
+        this.updateGameStatus();
+        
+        // Mostra popup del numero
+        this.showNumberPopup(data.number, data.meaning);
+        
+        // Auto-mark se abilitato
+        if (this.autoMarkEnabled && this.cardNumbers.includes(data.number)) {
+          this.markNumberOnCard(data.number);
+        }
+        
+        // Controlla se abbiamo vinto
+        if (this.user.role === 'player' && this.cardNumbers) {
+          const extractedCount = this.cardNumbers.filter(num => 
+            data.room.game.extractedNumbers.includes(num)
+          ).length;
+          
+          document.getElementById('numbers-found').textContent = extractedCount;
+          document.getElementById('progress-text').textContent = `${Math.round((extractedCount / 15) * 100)}%`;
+          document.getElementById('progress-fill').style.width = `${(extractedCount / 15) * 100}%`;
+          
+          if (extractedCount === 15) {
+            this.showToast('🎉 HAI VINTO! TOMBOLA COMPLETATA! 🎉', 'success');
+          }
+        }
+      }
     });
 
     this.socket.on('game-won', (data) => {
       this.room = data.room;
-      this.showWinnerModal(data.winner);
-      this.showToast(`${data.winner.name} ha vinto! 🎉`, 'success');
+      this.showWinnerPopup(data.winner);
+      if (this.autoExtractInterval) {
+        clearInterval(this.autoExtractInterval);
+        this.autoExtractInterval = null;
+      }
     });
 
     this.socket.on('new-game-started', (data) => {
       this.room = data.room;
-      this.updateGameUI();
+      this.resetGameState();
       this.showToast('Nuova partita iniziata!', 'success');
     });
 
-    this.socket.on('room-closed', (data) => {
-      this.showToast(data.message, 'warning');
-      setTimeout(() => location.reload(), 2000);
+    this.socket.on('number-marked', (data) => {
+      // Conferma segnatura numero
     });
 
+    // Keep alive
     this.socket.on('pong', (data) => {
-      // Keep alive
+      // Ping risposto
     });
   }
 
-  setupEventListeners() {
-    // Login
-    document.getElementById('create-room-btn').addEventListener('click', () => this.createRoom());
-    document.getElementById('join-room-btn').addEventListener('click', () => this.joinRoom());
-    document.getElementById('start-game-btn').addEventListener('click', () => this.startGame());
-    document.getElementById('copy-room-btn').addEventListener('click', () => this.copyRoomCode());
-    document.getElementById('copy-room-game-btn')?.addEventListener('click', () => this.copyRoomCode());
-    
-    // Game controls
-    document.getElementById('extract-btn')?.addEventListener('click', () => this.extractNumber());
-    document.getElementById('auto-btn')?.addEventListener('click', () => this.toggleAutoExtract());
-    document.getElementById('new-game-btn')?.addEventListener('click', () => this.startNewGame());
-    document.getElementById('new-game-modal-btn')?.addEventListener('click', () => this.startNewGame());
-    
-    // Popup
-    document.getElementById('close-popup')?.addEventListener('click', () => this.closePopup());
-    document.getElementById('close-winner-modal')?.addEventListener('click', () => this.closeModal('winner-modal'));
-    
-    // Enter key
-    document.getElementById('admin-name')?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.createRoom();
-    });
-    
-    document.getElementById('room-code-input')?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.joinRoom();
-    });
-    
-    document.getElementById('player-name-input')?.addEventListener('keypress', (e) => {
-      if (e.key === 'Enter') this.joinRoom();
-    });
+  // UI Methods
+  showAdminLoginModal() {
+    this.hideAllModals();
+    document.getElementById('admin-login-modal').classList.remove('hidden');
   }
 
-  // Server communication
-  createRoom() {
-    const name = document.getElementById('admin-name').value.trim() || 'Amministratore';
-    this.socket.emit('create-room', { name });
-  }
-
-  joinRoom() {
-    const roomCode = document.getElementById('room-code-input').value.trim().toUpperCase();
-    const name = document.getElementById('player-name-input').value.trim() || 'Giocatore';
+  showAdminDashboard(adminData) {
+    this.hideAllModals();
+    document.getElementById('admin-dashboard-modal').classList.remove('hidden');
     
-    if (!roomCode) {
-      this.showToast('Inserisci il codice stanza', 'error');
-      return;
+    // Aggiorna info admin
+    document.getElementById('admin-name-display').textContent = adminData.name;
+    document.getElementById('admin-type').textContent = adminData.isSuperAdmin ? 'Super Admin' : 'Admin';
+    
+    // Mostra/nascondi tab gestione admin
+    const manageBtn = document.getElementById('manage-admins-btn');
+    if (adminData.isSuperAdmin) {
+      manageBtn.style.display = 'flex';
+    } else {
+      manageBtn.style.display = 'none';
     }
-    
-    this.socket.emit('join-room', { roomCode, name });
-  }
-
-  startGame() {
-    if (this.user?.role === 'admin' && this.room?.code) {
-      this.socket.emit('start-game', { roomCode: this.room.code });
-    }
-  }
-
-  extractNumber() {
-    if (this.user?.role === 'admin' && this.room?.code) {
-      this.socket.emit('extract-number', { roomCode: this.room.code });
-    }
-  }
-
-  startNewGame() {
-    if (this.user?.role === 'admin' && this.room?.code) {
-      this.socket.emit('new-game', { roomCode: this.room.code });
-      this.closeModal('winner-modal');
-    }
-  }
-
-  copyRoomCode() {
-    if (this.room?.code) {
-      navigator.clipboard.writeText(this.room.code)
-        .then(() => this.showToast('Codice copiato!', 'success'))
-        .catch(() => this.showToast('Errore nella copia', 'error'));
-    }
-  }
-
-  markNumber(number) {
-    if (this.user?.role === 'player' && this.room?.code) {
-      this.socket.emit('mark-number', { roomCode: this.room.code, number });
-    }
-  }
-
-  // UI Functions
-  showLoginScreen() {
-    document.getElementById('login-screen').classList.remove('hidden');
-    document.getElementById('room-lobby').classList.add('hidden');
-    document.getElementById('game-screen').classList.add('hidden');
-  }
-
-  showRoomLobby() {
-    document.getElementById('login-screen').classList.add('hidden');
-    document.getElementById('room-lobby').classList.remove('hidden');
-    document.getElementById('game-screen').classList.add('hidden');
-    
-    // Update room code
-    document.getElementById('room-code-display').textContent = this.room.code;
-    
-    // Update players list
-    this.updateLobbyPlayers(this.room.players);
   }
 
   showGameScreen() {
-    document.getElementById('login-screen').classList.add('hidden');
-    document.getElementById('room-lobby').classList.add('hidden');
+    this.hideAllModals();
     document.getElementById('game-screen').classList.remove('hidden');
     
-    this.updateGameUI();
-  }
-
-  updateGameUI() {
-    if (!this.user || !this.room) return;
-
-    // Update user info
-    document.getElementById('user-name').textContent = this.user.name;
-    document.getElementById('user-role').textContent = this.user.role === 'admin' ? 'Admin' : 'Giocatore';
-    document.getElementById('user-role').className = `user-role role-${this.user.role}`;
-    document.getElementById('current-room-code').textContent = this.room.code;
+    // Mostra/nascondi controlli admin
+    const adminControls = document.getElementById('admin-controls-sidebar');
+    const playerMessage = document.getElementById('player-message-sidebar');
     
-    // Update stats
-    document.getElementById('numbers-left').textContent = this.room.game.remainingNumbers?.length || 90;
-    document.getElementById('extracted-count').textContent = this.room.game.extractedNumbers?.length || 0;
-    document.getElementById('online-players').textContent = this.room.players?.length || 0;
-    document.getElementById('players-count').textContent = this.room.players?.length || 0;
-    
-    // Update current number
-    this.updateCurrentNumber();
-    
-    // Update recent numbers
-    this.updateRecentNumbers();
-    
-    // Update players list
-    this.updatePlayersList();
-    
-    // Update tombola card
-    this.updateTombolaCard();
-    
-    // Show/hide admin controls
     if (this.user.role === 'admin') {
-      document.getElementById('admin-controls').classList.remove('hidden');
-      document.getElementById('player-message').classList.add('hidden');
+      adminControls.classList.remove('hidden');
+      playerMessage.classList.add('hidden');
     } else {
-      document.getElementById('admin-controls').classList.add('hidden');
-      document.getElementById('player-message').classList.remove('hidden');
+      adminControls.classList.add('hidden');
+      playerMessage.classList.remove('hidden');
     }
   }
 
-  updateCurrentNumber() {
-    if (this.room?.game?.lastExtracted) {
-      document.getElementById('current-number-value').textContent = this.room.game.lastExtracted;
-      document.getElementById('no-number').classList.add('hidden');
-      document.getElementById('current-number').classList.remove('hidden');
-    } else {
-      document.getElementById('no-number').classList.remove('hidden');
-      document.getElementById('current-number').classList.add('hidden');
-    }
+  showJoinRoomModal() {
+    this.hideAllModals();
+    document.getElementById('join-room-modal').classList.remove('hidden');
   }
 
-  updateRecentNumbers() {
-    const container = document.getElementById('recent-numbers');
-    container.innerHTML = '';
-    
-    const numbers = this.room?.game?.extractedNumbers || [];
-    const lastNumbers = numbers.slice(-10);
-    
-    lastNumbers.forEach((num, index) => {
-      const bubble = document.createElement('div');
-      bubble.className = 'recent-number';
-      if (index === lastNumbers.length - 1) {
-        bubble.classList.add('recent');
-      }
-      bubble.textContent = num;
-      container.appendChild(bubble);
+  hideJoinRoomModal() {
+    document.getElementById('join-room-modal').classList.add('hidden');
+    this.showAdminLoginModal();
+  }
+
+  hideAllModals() {
+    document.querySelectorAll('.modal-overlay').forEach(modal => {
+      modal.classList.add('hidden');
     });
   }
 
-  updatePlayersList() {
-    const container = document.getElementById('players-list');
-    const players = this.room?.players || [];
+  // Admin Methods
+  adminLogin() {
+    const email = document.getElementById('admin-email').value.trim();
+    const password = document.getElementById('admin-password').value.trim();
     
-    if (players.length === 0) {
-      container.innerHTML = '<div class="empty-state"><i class="fas fa-users"></i><p>Nessun giocatore online</p></div>';
+    if (!email || !password) {
+      this.showToast('Email e password richieste', 'error');
       return;
     }
     
-    container.innerHTML = '';
-    
-    players.forEach(player => {
-      const item = document.createElement('div');
-      item.className = 'player-item';
-      if (this.user?.id === player.id) {
-        item.classList.add('active');
-      }
-      if (player.hasWon) {
-        item.classList.add('winner');
-      }
-      
-      item.innerHTML = `
-        <div class="player-info">
-          <div class="player-avatar">${player.name.charAt(0)}</div>
-          <div class="player-details">
-            <h4>${player.name}</h4>
-            <div class="player-code">${player.id.slice(-6)}</div>
-          </div>
-        </div>
-        <div class="player-score">
-          ${player.extractedCount || 0}/15
-          ${player.hasWon ? ' 🏆' : ''}
-        </div>
-      `;
-      
-      container.appendChild(item);
-    });
+    this.socket.emit('admin-login', { email, password });
   }
 
-  updateLobbyPlayers(players) {
-    const container = document.getElementById('lobby-players');
+  logoutAdmin() {
+    this.isAdmin = false;
+    this.isSuperAdmin = false;
+    this.user = null;
+    localStorage.removeItem('admin_session');
+    this.showAdminLoginModal();
+    this.showToast('Disconnesso', 'info');
+  }
+
+  createRoomAsAdmin() {
+    const roomName = document.getElementById('room-name').value.trim();
+    const maxPlayers = parseInt(document.getElementById('max-players').value);
+    const showSmorfia = document.getElementById('show-smorfia').checked;
+    const autoMark = document.getElementById('auto-mark').checked;
     
-    if (!players || players.length === 0) {
-      container.innerHTML = '<div class="empty-state"><i class="fas fa-user-clock"></i><p>In attesa di giocatori...</p></div>';
+    if (!roomName) {
+      this.showToast('Inserisci un nome per la stanza', 'error');
       return;
     }
     
-    container.innerHTML = '';
-    
-    players.forEach(player => {
-      const item = document.createElement('div');
-      item.className = 'player-item';
-      
-      item.innerHTML = `
-        <div class="player-info">
-          <div class="player-avatar">${player.name.charAt(0)}</div>
-          <div class="player-details">
-            <h4>${player.name}</h4>
-            <div class="player-code">Giocatore</div>
-          </div>
-        </div>
-        <div class="player-score">Pronto</div>
-      `;
-      
-      container.appendChild(item);
+    this.socket.emit('create-room', {
+      name: roomName,
+      maxPlayers: maxPlayers || 20,
+      settings: {
+        showSmorfia,
+        autoMark
+      }
     });
   }
 
-  updateTombolaCard() {
-    const container = document.getElementById('tombola-card-grid');
-    if (!container || this.user?.role !== 'player') return;
-    
-    container.innerHTML = '';
-    
-    const player = this.room?.players?.find(p => p.id === this.user.id);
-    if (!player?.cardNumbers) return;
-    
-    const numbers = player.cardNumbers;
-    const extracted = this.room?.game?.extractedNumbers || [];
-    
-    // Show 15 numbers in a grid
-    for (let i = 0; i < 15; i++) {
-      if (i >= numbers.length) break;
-      
-      const num = numbers[i];
-      const cell = document.createElement('div');
-      cell.className = 'number-cell';
-      cell.textContent = num;
-      
-      if (extracted.includes(num)) {
-        cell.classList.add('extracted');
-        if (num === this.room?.game?.lastExtracted) {
-          cell.classList.add('recent');
-        }
-      }
-      
-      // Click to mark/unmark
-      cell.addEventListener('click', () => {
-        if (extracted.includes(num)) {
-          cell.classList.toggle('extracted');
-        }
-      });
-      
-      container.appendChild(cell);
+  createNewAdmin() {
+    if (!this.isSuperAdmin) {
+      this.showToast('Solo il Super Admin può creare nuovi admin', 'error');
+      return;
     }
     
-    // Update score
-    const extractedCount = numbers.filter(n => extracted.includes(n)).length;
-    document.getElementById('player-score').textContent = `${extractedCount}/15`;
-  }
-
-  showNumberPopup(number) {
-    document.getElementById('popup-number').textContent = number;
-    document.getElementById('number-popup').style.display = 'flex';
+    const email = document.getElementById('new-admin-email').value.trim();
+    const name = document.getElementById('new-admin-name').value.trim();
+    const password = document.getElementById('new-admin-password').value.trim();
     
-    // Auto-close after 3 seconds
-    setTimeout(() => {
-      this.closePopup();
-    }, 3000);
+    if (!email || !password) {
+      this.showToast('Email e password richieste', 'error');
+      return;
+    }
+    
+    if (!email.includes('@')) {
+      this.showToast('Email non valida', 'error');
+      return;
+    }
+    
+    if (password.length < 6) {
+      this.showToast('Password troppo corta (min 6 caratteri)', 'error');
+      return;
+    }
+    
+    this.socket.emit('create-admin', { email, password, name });
   }
 
-  closePopup() {
-    document.getElementById('number-popup').style.display = 'none';
+  switchAdminTab(tabName) {
+    // Update tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.classList.remove('active');
+      if (btn.dataset.tab === tabName) btn.classList.add('active');
+    });
+    
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(content => {
+      content.classList.remove('active');
+      content.classList.add('hidden');
+    });
+    
+    const activeTab = document.getElementById(`${tabName}-tab`);
+    if (activeTab) {
+      activeTab.classList.remove('hidden');
+      activeTab.classList.add('active');
+    }
   }
 
-  showWinnerModal(player) {
-    document.getElementById('winner-name').textContent = player.name;
-    document.getElementById('winner-modal-overlay').style.display = 'flex';
+  async loadAdminsList() {
+    if (!this.isSuperAdmin) return;
+    
+    // Per ora mostra solo mock data
+    const adminsList = document.getElementById('admins-list');
+    adminsList.innerHTML = `
+      <div style="color: var(--text-secondary); padding: 20px; text-align: center;">
+        <i class="fas fa-users"></i>
+        <p>Lista admin verrà caricata dal server</p>
+      </div>
+    `;
   }
 
-  closeModal(modalId) {
-    document.getElementById(`${modalId}-overlay`).style.display = 'none';
+  // Game Methods
+  joinRoomAsPlayer() {
+    const roomCode = document.getElementById('join-room-code-input').value.trim().toUpperCase();
+    const playerName = document.getElementById('join-player-name').value.trim();
+    
+    if (!roomCode || roomCode.length !== 6) {
+      this.showToast('Codice stanza non valido (6 caratteri)', 'error');
+      return;
+    }
+    
+    if (!playerName || playerName.length < 2) {
+      this.showToast('Inserisci un nome valido', 'error');
+      return;
+    }
+    
+    this.socket.emit('join-room', { roomCode, playerName });
+  }
+
+  extractNumber() {
+    if (!this.room || !this.isAdmin) {
+      this.showToast('Non autorizzato', 'error');
+      return;
+    }
+    
+    if (!this.room.game.active) {
+      this.showToast('Il gioco non è attivo', 'error');
+      return;
+    }
+    
+    this.socket.emit('extract-number', { roomCode: this.room.code });
   }
 
   toggleAutoExtract() {
-    const btn = document.getElementById('auto-btn');
+    const autoBtn = document.getElementById('auto-btn-sidebar');
     
     if (this.autoExtractInterval) {
       clearInterval(this.autoExtractInterval);
       this.autoExtractInterval = null;
-      btn.innerHTML = '<i class="fas fa-robot"></i> AUTO';
+      autoBtn.innerHTML = '<i class="fas fa-robot"></i> Auto';
+      autoBtn.classList.remove('btn-extract');
+      autoBtn.classList.add('btn-auto');
       this.showToast('Auto-estrazione disattivata', 'info');
     } else {
+      if (!this.room || !this.isAdmin || !this.room.game.active) {
+        this.showToast('Non puoi avviare auto-estrazione', 'error');
+        return;
+      }
+      
       this.autoExtractInterval = setInterval(() => {
-        if (this.user?.role === 'admin') {
+        if (this.room.game.active && this.room.game.remainingNumbers.length > 0) {
           this.extractNumber();
         } else {
-          this.toggleAutoExtract();
+          this.toggleAutoExtract(); // Disattiva se finito
         }
-      }, 2000);
+      }, 3000); // Ogni 3 secondi
       
-      btn.innerHTML = '<i class="fas fa-stop"></i> FERMA';
+      autoBtn.innerHTML = '<i class="fas fa-stop"></i> Ferma';
+      autoBtn.classList.remove('btn-auto');
+      autoBtn.classList.add('btn-extract');
       this.showToast('Auto-estrazione attivata', 'success');
     }
   }
 
-  updateConnectionStatus(connected) {
+  startNewGame() {
+    if (!this.room || !this.isAdmin) {
+      this.showToast('Solo l\'admin può iniziare una nuova partita', 'error');
+      return;
+    }
+    
+    if (confirm('Vuoi iniziare una nuova partita? Tutti i progressi andranno persi.')) {
+      this.socket.emit('new-game', { roomCode: this.room.code });
+    }
+  }
+
+  toggleAutoMark() {
+    this.autoMarkEnabled = !this.autoMarkEnabled;
+    const btn = document.getElementById('auto-mark-btn');
+    if (this.autoMarkEnabled) {
+      btn.innerHTML = '<i class="fas fa-toggle-on"></i> Auto-segna ON';
+      btn.classList.add('btn-success');
+      this.showToast('Auto-segna attivato', 'success');
+    } else {
+      btn.innerHTML = '<i class="fas fa-toggle-off"></i> Auto-segna OFF';
+      btn.classList.remove('btn-success');
+      this.showToast('Auto-segna disattivato', 'info');
+    }
+  }
+
+  // UI Update Methods
+  updateRoomInfo() {
+    if (!this.room) return;
+    
+    // Room code
+    document.getElementById('current-room-code').textContent = this.room.code;
+    
+    // Room name in title
+    document.querySelector('.user-name').textContent = this.user.name;
+    
+    // Avatar
+    const avatar = document.getElementById('user-avatar');
+    if (this.user.role === 'admin') {
+      avatar.innerHTML = '<i class="fas fa-crown"></i>';
+      avatar.style.background = 'var(--gradient-accent)';
+    } else {
+      avatar.innerHTML = '<i class="fas fa-user"></i>';
+      avatar.style.background = 'var(--gradient-primary)';
+    }
+    
+    // Score
+    if (this.user.role === 'player' && this.cardNumbers) {
+      const extractedCount = this.cardNumbers.filter(num => 
+        this.room.game.extractedNumbers.includes(num)
+      ).length;
+      document.getElementById('user-score').textContent = `${extractedCount}/15`;
+    }
+  }
+
+  generateTombolaCard() {
+    const grid = document.getElementById('tombola-card-grid');
+    grid.innerHTML = '';
+    
+    if (!this.cardNumbers || this.cardNumbers.length === 0) {
+      // Mostra cartella vuota
+      for (let i = 0; i < 15; i++) {
+        const cell = document.createElement('div');
+        cell.className = 'number-cell';
+        cell.textContent = '?';
+        grid.appendChild(cell);
+      }
+      return;
+    }
+    
+    // Ordina numeri
+    const sortedNumbers = [...this.cardNumbers].sort((a, b) => a - b);
+    
+    // Crea 15 celle (3 righe x 5 colonne)
+    for (let i = 0; i < 15; i++) {
+      const cell = document.createElement('div');
+      const number = sortedNumbers[i];
+      
+      cell.className = 'number-cell';
+      cell.textContent = number;
+      cell.dataset.number = number;
+      
+      // Se il numero è stato estratto, evidenzia
+      if (this.room && this.room.game.extractedNumbers.includes(number)) {
+        cell.classList.add('extracted');
+        this.markedNumbers.add(number);
+        
+        // Se è l'ultimo estratto, evidenzia di più
+        if (this.room.game.lastExtracted === number) {
+          cell.classList.add('recent');
+        }
+      }
+      
+      // Click per segnare manualmente
+      cell.addEventListener('click', () => {
+        if (this.room && this.room.game.extractedNumbers.includes(number)) {
+          cell.classList.toggle('extracted');
+          if (cell.classList.contains('extracted')) {
+            this.markedNumbers.add(number);
+          } else {
+            this.markedNumbers.delete(number);
+          }
+        }
+      });
+      
+      grid.appendChild(cell);
+    }
+    
+    // Aggiorna conteggio
+    if (this.room) {
+      const extractedCount = sortedNumbers.filter(num => 
+        this.room.game.extractedNumbers.includes(num)
+      ).length;
+      
+      document.getElementById('numbers-found').textContent = extractedCount;
+      document.getElementById('progress-text').textContent = `${Math.round((extractedCount / 15) * 100)}%`;
+      document.getElementById('progress-fill').style.width = `${(extractedCount / 15) * 100}%`;
+    }
+  }
+
+  updateCurrentNumber(number, meaning) {
+    const numberValue = document.getElementById('current-number-value');
+    const numberMeaning = document.getElementById('number-meaning');
+    
+    if (number) {
+      numberValue.textContent = number;
+      numberMeaning.innerHTML = `<i class="fas fa-quote-left"></i><span>${meaning}</span>`;
+    } else {
+      numberValue.textContent = '-';
+      numberMeaning.innerHTML = '<i class="fas fa-quote-left"></i><span>In attesa dell\'estrazione...</span>';
+    }
+  }
+
+  updateRecentNumbers() {
+    const grid = document.getElementById('recent-numbers-grid');
+    if (!this.room || !this.room.game.extractedNumbers) {
+      grid.innerHTML = '';
+      return;
+    }
+    
+    grid.innerHTML = '';
+    const recentNumbers = this.room.game.extractedNumbers.slice(-10).reverse();
+    
+    recentNumbers.forEach((num, index) => {
+      const cell = document.createElement('div');
+      cell.className = 'recent-number';
+      if (index === 0) cell.classList.add('recent');
+      cell.textContent = num;
+      grid.appendChild(cell);
+    });
+  }
+
+  updatePlayersList() {
+    const list = document.getElementById('players-list-sidebar');
+    const count = document.getElementById('players-count');
+    
+    if (!this.room || !this.room.players) {
+      list.innerHTML = '';
+      count.textContent = '0';
+      return;
+    }
+    
+    list.innerHTML = '';
+    count.textContent = this.room.players.length;
+    
+    this.room.players.forEach(player => {
+      const item = document.createElement('div');
+      item.className = 'player-item';
+      if (player.id === this.socket.id) item.classList.add('active');
+      if (player.hasWon) item.classList.add('winner');
+      
+      const extractedCount = player.cardNumbers?.filter(num => 
+        this.room.game.extractedNumbers.includes(num)
+      ).length || 0;
+      
+      item.innerHTML = `
+        <div class="player-info">
+          <div class="player-avatar-small">
+            ${player.name.charAt(0).toUpperCase()}
+          </div>
+          <div class="player-details-small">
+            <h4>${player.name}</h4>
+            <div class="player-code-small">${player.id === this.socket.id ? 'Tu' : 'Giocatore'}</div>
+          </div>
+        </div>
+        <div class="player-score-small">${extractedCount}/15</div>
+      `;
+      
+      list.appendChild(item);
+    });
+  }
+
+  updateGameStatus() {
+    const status = document.getElementById('game-status');
+    if (!this.room) {
+      status.innerHTML = '<i class="fas fa-circle"></i><span>In attesa...</span>';
+      return;
+    }
+    
+    if (this.room.game.active) {
+      const remaining = this.room.game.remainingNumbers.length;
+      status.innerHTML = `<i class="fas fa-circle" style="color: var(--success)"></i><span>Gioco attivo (${remaining} rimasti)</span>`;
+    } else if (this.room.game.winner) {
+      status.innerHTML = `<i class="fas fa-trophy" style="color: var(--warning)"></i><span>Vinto da ${this.room.game.winner.name}</span>`;
+    } else {
+      status.innerHTML = '<i class="fas fa-circle"></i><span>In attesa...</span>';
+    }
+  }
+
+  updateConnectionStatus(connected = false) {
     const dot = document.getElementById('connection-dot');
     const text = document.getElementById('connection-text');
-    const status = document.getElementById('server-status');
     
     if (connected) {
       dot.className = 'connection-dot connected';
       text.textContent = 'Connesso';
-      if (status) status.textContent = 'Online';
     } else {
       dot.className = 'connection-dot disconnected';
       text.textContent = 'Disconnesso';
-      if (status) status.textContent = 'Offline';
     }
   }
 
-  attemptReconnect() {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      setTimeout(() => {
-        this.socket.connect();
-        this.showToast(`Tentativo di riconnessione ${this.reconnectAttempts}/${this.maxReconnectAttempts}`, 'warning');
-      }, 3000);
-    } else {
-      this.showToast('Impossibile riconnettersi. Ricarica la pagina.', 'error');
+  // Popup Methods
+  showNumberPopup(number, meaning) {
+    document.getElementById('popup-number-value').textContent = number;
+    document.getElementById('popup-number-meaning').textContent = meaning;
+    document.getElementById('number-popup').classList.remove('hidden');
+    
+    // Auto-close dopo 5 secondi
+    setTimeout(() => {
+      if (!document.getElementById('number-popup').classList.contains('hidden')) {
+        this.closeNumberPopup();
+      }
+    }, 5000);
+  }
+
+  closeNumberPopup() {
+    document.getElementById('number-popup').classList.add('hidden');
+  }
+
+  showWinnerPopup(winner) {
+    document.getElementById('winner-name').textContent = winner.name;
+    document.getElementById('winner-popup').classList.remove('hidden');
+  }
+
+  closeWinnerPopup() {
+    document.getElementById('winner-popup').classList.add('hidden');
+  }
+
+  showSettingsModal() {
+    // Implementa se necessario
+    this.showToast('Impostazioni - Funzione in sviluppo', 'info');
+  }
+
+  // Utility Methods
+  markNumberOnCard(number) {
+    const cell = document.querySelector(`.number-cell[data-number="${number}"]`);
+    if (cell && !cell.classList.contains('extracted')) {
+      cell.classList.add('extracted');
+      this.markedNumbers.add(number);
+      
+      // Aggiorna conteggio
+      const current = parseInt(document.getElementById('numbers-found').textContent);
+      document.getElementById('numbers-found').textContent = current + 1;
+      
+      const newPercent = ((current + 1) / 15) * 100;
+      document.getElementById('progress-text').textContent = `${Math.round(newPercent)}%`;
+      document.getElementById('progress-fill').style.width = `${newPercent}%`;
     }
   }
 
-  checkServerHealth() {
-    fetch('/api/health')
-      .then(response => response.json())
-      .then(data => {
-        console.log('Server health:', data);
-        document.getElementById('server-status').textContent = 'Online';
-      })
-      .catch(error => {
-        console.error('Server health check failed:', error);
-        document.getElementById('server-status').textContent = 'Offline';
-      });
+  resetGameState() {
+    this.markedNumbers.clear();
+    this.generateTombolaCard();
+    this.updateCurrentNumber(null, null);
+    this.updateRecentNumbers();
+    this.updateGameStatus();
+    this.updatePlayersList();
+    
+    // Reset progress
+    document.getElementById('numbers-found').textContent = '0';
+    document.getElementById('progress-text').textContent = '0%';
+    document.getElementById('progress-fill').style.width = '0%';
+    
+    // Ferma auto-estrazione se attiva
+    if (this.autoExtractInterval) {
+      clearInterval(this.autoExtractInterval);
+      this.autoExtractInterval = null;
+      const autoBtn = document.getElementById('auto-btn-sidebar');
+      autoBtn.innerHTML = '<i class="fas fa-robot"></i> Auto';
+      autoBtn.classList.remove('btn-extract');
+      autoBtn.classList.add('btn-auto');
+    }
+  }
+
+  copyRoomCode() {
+    if (!this.room) {
+      this.showToast('Non sei in una stanza', 'error');
+      return;
+    }
+    
+    navigator.clipboard.writeText(this.room.code)
+      .then(() => this.showToast('Codice stanza copiato!', 'success'))
+      .catch(() => this.showToast('Errore copia codice', 'error'));
   }
 
   showToast(message, type = 'info') {
-    // Remove existing toasts
-    const oldToasts = document.querySelectorAll('.toast');
-    oldToasts.forEach(t => t.remove());
-    
-    // Create new toast
+    const container = document.getElementById('toast-container');
     const toast = document.createElement('div');
     toast.className = `toast ${type}`;
+    
+    const icons = {
+      success: 'fas fa-check-circle',
+      error: 'fas fa-exclamation-circle',
+      warning: 'fas fa-exclamation-triangle',
+      info: 'fas fa-info-circle'
+    };
+    
     toast.innerHTML = `
-      <i class="fas fa-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'}"></i>
+      <i class="${icons[type] || 'fas fa-info-circle'}"></i>
       <span>${message}</span>
     `;
     
-    document.body.appendChild(toast);
+    container.appendChild(toast);
     
-    // Auto-remove after 3 seconds
+    // Rimuovi dopo 5 secondi
     setTimeout(() => {
-      if (toast.parentNode) {
-        toast.style.animation = 'toastOut 0.3s ease';
-        setTimeout(() => {
-          toast.parentNode.removeChild(toast);
-        }, 300);
-      }
-    }, 3000);
-    
-    // Add exit animation if not exists
-    if (!document.querySelector('#toast-animations')) {
-      const style = document.createElement('style');
-      style.id = 'toast-animations';
-      style.textContent = `
-        @keyframes toastOut {
-          from { opacity: 1; transform: translate(-50%, 0); }
-          to { opacity: 0; transform: translate(-50%, -20px); }
-        }
-      `;
-      document.head.appendChild(style);
-    }
+      toast.style.animation = 'slideUp 0.3s ease forwards';
+      setTimeout(() => toast.remove(), 300);
+    }, 5000);
   }
 }
 
-// Initialize game
-window.addEventListener('DOMContentLoaded', () => {
-  window.game = new TombolaGame();
+// Avvia il gioco quando la pagina è pronta
+document.addEventListener('DOMContentLoaded', () => {
+  window.tombolaGame = new TombolaGame();
 });
+
+// Prevent FOUC
+document.body.style.opacity = '0';
+window.addEventListener('DOMContentLoaded', () => {
+  document.body.style.transition = 'opacity 0.3s';
+  document.body.style.opacity = '1';
+});
+
+// PWA support
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(console.error);
+  });
+}
