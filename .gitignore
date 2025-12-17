@@ -15,7 +15,7 @@ yarn-error.log*
 *.pid
 *.seed
 
-# Coverage directory used by tools like istanbul
+# Coverage directory
 coverage/
 .nyc_output
 
@@ -42,22 +42,6 @@ Thumbs.db
 tmp/
 temp/
 
-# Build files
-dist/
-build/
-
-# Database files
-*.db
-*.sqlite
-*.sqlite3
-
-# Session files
-sessions/
-
-# Config files with sensitive data
-config/private/
-secrets/
-
 # Uploads
 uploads/
 public/uploads/
@@ -67,9 +51,6 @@ public/uploads/
 *.key
 *.crt
 
-# Package lock
-package-lock.json
-yarn.lock
-
-# Render specific
-.render.yaml
+# Sensitive data
+secrets/
+config/private/
